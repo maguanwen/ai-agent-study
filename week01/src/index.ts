@@ -4,6 +4,9 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { z } from "zod";
 
+import { loadModelConfig } from "./env.js";
+import { callModel } from "./model.js";
+
 const questionSchema = z
   .string()
   .trim()
@@ -11,6 +14,7 @@ const questionSchema = z
   .max(2_000, "问题不能超过 2000 个字符");
 
 async function main(): Promise<void> {
+  const config = loadModelConfig();
   const terminal = createInterface({ input: stdin, output: stdout });
 
   try {
@@ -18,12 +22,20 @@ async function main(): Promise<void> {
     const question = questionSchema.parse(input);
     const startedAt = performance.now();
 
-    // 下一步会把这里替换为真实的模型 API 调用。
-    const answer = `已收到你的问题：${question}`;
+    const result = await callModel(question, config);
     const elapsedMs = performance.now() - startedAt;
 
-    console.log(`\n回答：${answer}`);
+    console.log(`\n回答：${result.answer}`);
+    console.log(`模型：${result.model}`);
     console.log(`耗时：${elapsedMs.toFixed(2)} ms`);
+
+    if (result.usage) {
+      console.log(
+        `Token：输入 ${result.usage.inputTokens}，输出 ${result.usage.outputTokens}，总计 ${result.usage.totalTokens}`,
+      );
+    } else {
+      console.log("Token：服务端未返回用量信息");
+    }
   } finally {
     terminal.close();
   }
