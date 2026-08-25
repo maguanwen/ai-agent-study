@@ -58,6 +58,7 @@ describe("callModel", () => {
       baseUrl: "https://example.com/v1",
       model: "test-model",
       timeoutMs: 5_000,
+      maxOutputTokens: 600,
       temperature: 0.2,
       maxHistoryTurns: 10,
       logPath: "logs/test.jsonl",
@@ -86,6 +87,7 @@ describe("callModel", () => {
     expect(requestBody).toMatchObject({
       model: "test-model",
       messages,
+      max_completion_tokens: 600,
       temperature: 0.2,
     });
   });

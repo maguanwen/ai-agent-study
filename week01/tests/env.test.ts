@@ -9,6 +9,7 @@ describe("loadModelConfig", () => {
       MODEL_BASE_URL: "https://example.com/v1/",
       MODEL_NAME: "test-model",
       MODEL_TIMEOUT_MS: "5000",
+      MODEL_MAX_OUTPUT_TOKENS: "600",
       MODEL_TEMPERATURE: "0.2",
       CHAT_MAX_TURNS: "8",
       CHAT_LOG_PATH: "logs/test.jsonl",
@@ -19,6 +20,7 @@ describe("loadModelConfig", () => {
       baseUrl: "https://example.com/v1",
       model: "test-model",
       timeoutMs: 5000,
+      maxOutputTokens: 600,
       temperature: 0.2,
       maxHistoryTurns: 8,
       logPath: "logs/test.jsonl",
@@ -30,6 +32,17 @@ describe("loadModelConfig", () => {
       loadModelConfig({
         MODEL_BASE_URL: "https://example.com/v1",
         MODEL_NAME: "test-model",
+      }),
+    ).toThrow(EnvironmentConfigError);
+  });
+
+  it("拒绝非正数的最大输出 token", () => {
+    expect(() =>
+      loadModelConfig({
+        MODEL_API_KEY: "test-key",
+        MODEL_BASE_URL: "https://example.com/v1",
+        MODEL_NAME: "test-model",
+        MODEL_MAX_OUTPUT_TOKENS: "0",
       }),
     ).toThrow(EnvironmentConfigError);
   });

@@ -5,6 +5,7 @@ const modelConfigSchema = z.object({
   MODEL_BASE_URL: z.string().trim().url("必须是合法 URL"),
   MODEL_NAME: z.string().trim().min(1, "不能为空"),
   MODEL_TIMEOUT_MS: z.coerce.number().int().positive().max(120_000).default(30_000),
+  MODEL_MAX_OUTPUT_TOKENS: z.coerce.number().int().positive().default(800),
   MODEL_TEMPERATURE: z.preprocess(
     (value) => (value === "" || value === undefined ? undefined : value),
     z.coerce.number().min(0).max(2).optional(),
@@ -18,6 +19,7 @@ export interface ModelConfig {
   baseUrl: string;
   model: string;
   timeoutMs: number;
+  maxOutputTokens: number;
   temperature: number | undefined;
   maxHistoryTurns: number;
   logPath: string;
@@ -45,6 +47,7 @@ export function loadModelConfig(
     baseUrl: result.data.MODEL_BASE_URL.replace(/\/+$/, ""),
     model: result.data.MODEL_NAME,
     timeoutMs: result.data.MODEL_TIMEOUT_MS,
+    maxOutputTokens: result.data.MODEL_MAX_OUTPUT_TOKENS,
     temperature: result.data.MODEL_TEMPERATURE,
     maxHistoryTurns: result.data.CHAT_MAX_TURNS,
     logPath: result.data.CHAT_LOG_PATH,

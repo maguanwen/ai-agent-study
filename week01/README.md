@@ -31,12 +31,13 @@ MODEL_API_KEY=你的密钥
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_NAME=你的模型名称
 MODEL_TIMEOUT_MS=30000
+MODEL_MAX_OUTPUT_TOKENS=800
 MODEL_TEMPERATURE=0.2
 CHAT_MAX_TURNS=10
 CHAT_LOG_PATH=logs/chat.jsonl
 ```
 
-`MODEL_BASE_URL` 应填写 API 的 `/v1` 基础地址，不要包含 `/chat/completions`。部分模型不支持 `temperature`；遇到参数不支持错误时，可以将 `MODEL_TEMPERATURE` 留空。
+`MODEL_BASE_URL` 应填写 API 的 `/v1` 基础地址，不要包含 `/chat/completions`。`MODEL_MAX_OUTPUT_TOKENS` 会映射为 Chat Completions 的 `max_completion_tokens`，用于限制一次请求最多生成的 token。该限制还包括模型生成的不可见推理或格式 token，因此实际可见回答通常少于配置值。部分模型不支持 `temperature`；遇到参数不支持错误时，可以将 `MODEL_TEMPERATURE` 留空。
 
 不要提交 `.env`，也不要将 API Key 写入浏览器代码、源码或日志。
 

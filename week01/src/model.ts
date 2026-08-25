@@ -84,6 +84,7 @@ export async function callModel(
     const requestBody: Record<string, unknown> = {
       model: config.model,
       messages: messages.map(({ role, content }) => ({ role, content })),
+      max_completion_tokens: config.maxOutputTokens,
     };
 
     if (config.temperature !== undefined) {
