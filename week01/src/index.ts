@@ -11,7 +11,7 @@ import {
 } from "./chat.js";
 import { loadModelConfig } from "./env.js";
 import { appendChatLog } from "./logger.js";
-import { callModel } from "./model.js";
+import { streamModel } from "./model.js";
 
 const questionSchema = z
   .string()
@@ -57,16 +57,23 @@ async function main(): Promise<void> {
         continue;
       }
 
+      let hasPrintedStream = false;
       try {
         const question = questionSchema.parse(input);
         const messages = session.createRequestMessages(question);
         const startedAt = performance.now();
-        const result = await callModel(messages, config);
+        const result = await streamModel(messages, config, (delta) => {
+          if (!hasPrintedStream) {
+            stdout.write("\n助手：");
+            hasPrintedStream = true;
+          }
+          stdout.write(delta);
+        });
         const elapsedMs = performance.now() - startedAt;
 
         session.commitTurn(question, result.answer);
 
-        console.log(`\n助手：${result.answer}`);
+        stdout.write("\n");
         console.log(`模型：${result.model}`);
         console.log(`耗时：${elapsedMs.toFixed(2)} ms`);
 
@@ -93,6 +100,9 @@ async function main(): Promise<void> {
 
         console.log(`当前保留 ${session.turnCount} 轮对话。\n`);
       } catch (error: unknown) {
+        if (hasPrintedStream) {
+          stdout.write("\n");
+        }
         console.error(getErrorMessage(error));
       }
     }

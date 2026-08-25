@@ -8,6 +8,7 @@
 - 从终端读取并校验问题；
 - 从服务端环境变量读取模型配置；
 - 发送 `system`、`user` 和 `assistant` 消息历史；
+- 通过 SSE 实时输出模型生成的文本增量；
 - 支持 `/help`、`/history`、`/clear` 和 `/exit`；
 - 限制上下文中保留的最大对话轮数；
 - 支持请求超时和 HTTP 错误处理；
@@ -66,6 +67,22 @@ pnpm dev
 
 模型请求失败时，本轮问题和回答不会写入会话历史，程序会继续等待下一次输入。
 
+## 流式输出
+
+模型请求使用 `stream: true`，服务端通过 SSE 连续返回 `chat.completion.chunk`。程序读取 `choices[0].delta.content` 并立即写入终端，因此不需要等待完整回答生成后才看到内容。
+
+程序同时发送：
+
+```json
+{
+  "stream_options": {
+    "include_usage": true
+  }
+}
+```
+
+最终的空 `choices` chunk 用于返回整次请求的 token 用量。流结束后，程序才会把拼接后的完整回答提交到会话历史和 JSONL 日志。如果流中途失败，已经显示的部分文本不会进入正式历史。
+
 ## 对话日志
 
 每次成功问答会追加到 `CHAT_LOG_PATH` 指定的 JSONL 文件。每行是一条独立 JSON，包含：
@@ -94,12 +111,14 @@ src/
 ├── env.ts     # 环境变量读取与校验
 ├── index.ts   # 多轮聊天循环与结果展示
 ├── logger.ts  # JSON Lines 日志追加
-└── model.ts   # HTTP 请求与模型响应解析
+├── model.ts   # 普通请求、流式请求与模型响应解析
+└── sse.ts     # SSE 网络分片解析
 tests/
 ├── chat.test.ts
 ├── env.test.ts
 ├── logger.test.ts
-└── model.test.ts
+├── model.test.ts
+└── sse.test.ts
 ```
 
 当前历史只保存在进程内，退出后不会恢复。JSONL 文件用于学习记录和评测，不会在启动时自动载入为上下文。

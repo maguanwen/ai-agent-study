@@ -6,6 +6,7 @@ import {
   callModel,
   ModelApiError,
   parseChatCompletion,
+  streamModel,
 } from "../src/model.js";
 
 describe("parseChatCompletion", () => {
@@ -90,5 +91,92 @@ describe("callModel", () => {
       max_completion_tokens: 600,
       temperature: 0.2,
     });
+  });
+});
+
+describe("streamModel", () => {
+  it("实时输出文本增量并汇总最终回答和 token", async () => {
+    const messages: ChatMessage[] = [
+      { role: "system", content: "你是学习助手" },
+      { role: "user", content: "打个招呼" },
+    ];
+    const config: ModelConfig = {
+      apiKey: "test-key",
+      baseUrl: "https://example.com/v1",
+      model: "test-model",
+      timeoutMs: 5_000,
+      maxOutputTokens: 600,
+      temperature: 0.2,
+      maxHistoryTurns: 10,
+      logPath: "logs/test.jsonl",
+    };
+    const sseBody = [
+      'data: {"model":"test-model","choices":[{"delta":{"role":"assistant","content":""}}],"usage":null}',
+      'data: {"model":"test-model","choices":[{"delta":{"content":"你"}}],"usage":null}',
+      'data: {"model":"test-model","choices":[{"delta":{"content":"好"}}],"usage":null}',
+      'data: {"model":"test-model","choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2,"total_tokens":10}}',
+      "data: [DONE]",
+      "",
+    ].join("\n\n");
+    let requestBody: unknown;
+    const fetchMock = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(sseBody, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    }) as typeof fetch;
+    const deltas: string[] = [];
+
+    const result = await streamModel(
+      messages,
+      config,
+      (delta) => deltas.push(delta),
+      fetchMock,
+    );
+
+    expect(deltas).toEqual(["你", "好"]);
+    expect(result).toEqual({
+      answer: "你好",
+      model: "test-model",
+      usage: { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+    });
+    expect(requestBody).toMatchObject({
+      model: "test-model",
+      messages,
+      max_completion_tokens: 600,
+      stream: true,
+      stream_options: { include_usage: true },
+    });
+  });
+
+  it("拒绝流中的非法 JSON", async () => {
+    const config: ModelConfig = {
+      apiKey: "test-key",
+      baseUrl: "https://example.com/v1",
+      model: "test-model",
+      timeoutMs: 5_000,
+      maxOutputTokens: 600,
+      temperature: undefined,
+      maxHistoryTurns: 10,
+      logPath: "logs/test.jsonl",
+    };
+    const fetchMock = (async () =>
+      new Response("data: not-json\n\ndata: [DONE]\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      })) as typeof fetch;
+
+    await expect(
+      streamModel(
+        [{ role: "user", content: "你好" }],
+        config,
+        () => undefined,
+        fetchMock,
+      ),
+    ).rejects.toThrow("模型流包含无法解析的 JSON");
   });
 });
