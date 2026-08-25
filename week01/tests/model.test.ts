@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { ModelApiError, parseChatCompletion } from "../src/model.js";
+import type { ChatMessage } from "../src/chat.js";
+import type { ModelConfig } from "../src/env.js";
+import {
+  callModel,
+  ModelApiError,
+  parseChatCompletion,
+} from "../src/model.js";
 
 describe("parseChatCompletion", () => {
   it("解析回答和 token 用量", () => {
@@ -36,5 +42,51 @@ describe("parseChatCompletion", () => {
         choices: [{ message: { role: "assistant" } }],
       }),
     ).toThrow(ModelApiError);
+  });
+});
+
+describe("callModel", () => {
+  it("将完整消息历史发送给模型接口", async () => {
+    const messages: ChatMessage[] = [
+      { role: "system", content: "你是学习助手" },
+      { role: "user", content: "我叫小明" },
+      { role: "assistant", content: "你好，小明" },
+      { role: "user", content: "我叫什么？" },
+    ];
+    const config: ModelConfig = {
+      apiKey: "test-key",
+      baseUrl: "https://example.com/v1",
+      model: "test-model",
+      timeoutMs: 5_000,
+      temperature: 0.2,
+      maxHistoryTurns: 10,
+      logPath: "logs/test.jsonl",
+    };
+    let requestBody: unknown;
+    const fetchMock = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({
+          model: "test-model",
+          choices: [
+            {
+              message: { role: "assistant", content: "你叫小明。" },
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    await callModel(messages, config, fetchMock);
+
+    expect(requestBody).toMatchObject({
+      model: "test-model",
+      messages,
+      temperature: 0.2,
+    });
   });
 });

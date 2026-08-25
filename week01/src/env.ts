@@ -9,6 +9,8 @@ const modelConfigSchema = z.object({
     (value) => (value === "" || value === undefined ? undefined : value),
     z.coerce.number().min(0).max(2).optional(),
   ),
+  CHAT_MAX_TURNS: z.coerce.number().int().positive().max(100).default(10),
+  CHAT_LOG_PATH: z.string().trim().min(1).default("logs/chat.jsonl"),
 });
 
 export interface ModelConfig {
@@ -17,6 +19,8 @@ export interface ModelConfig {
   model: string;
   timeoutMs: number;
   temperature: number | undefined;
+  maxHistoryTurns: number;
+  logPath: string;
 }
 
 export class EnvironmentConfigError extends Error {
@@ -42,5 +46,7 @@ export function loadModelConfig(
     model: result.data.MODEL_NAME,
     timeoutMs: result.data.MODEL_TIMEOUT_MS,
     temperature: result.data.MODEL_TEMPERATURE,
+    maxHistoryTurns: result.data.CHAT_MAX_TURNS,
+    logPath: result.data.CHAT_LOG_PATH,
   };
 }

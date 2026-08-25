@@ -10,6 +10,8 @@ describe("loadModelConfig", () => {
       MODEL_NAME: "test-model",
       MODEL_TIMEOUT_MS: "5000",
       MODEL_TEMPERATURE: "0.2",
+      CHAT_MAX_TURNS: "8",
+      CHAT_LOG_PATH: "logs/test.jsonl",
     });
 
     expect(config).toEqual({
@@ -18,6 +20,8 @@ describe("loadModelConfig", () => {
       model: "test-model",
       timeoutMs: 5000,
       temperature: 0.2,
+      maxHistoryTurns: 8,
+      logPath: "logs/test.jsonl",
     });
   });
 

@@ -8,8 +8,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest"
+    "test": "vitest run --passWithNoTests --exclude dist/**",
+    "test:watch": "vitest --exclude dist/**"
   },
   "keywords": [],
   "author": "",

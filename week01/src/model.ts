@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { ChatMessage } from "./chat.js";
 import type { ModelConfig } from "./env.js";
 
 const chatCompletionSchema = z.object({
@@ -72,7 +73,7 @@ export function parseChatCompletion(data: unknown): ModelResult {
 }
 
 export async function callModel(
-  question: string,
+  messages: readonly ChatMessage[],
   config: ModelConfig,
   fetchImplementation: typeof fetch = fetch,
 ): Promise<ModelResult> {
@@ -82,13 +83,7 @@ export async function callModel(
   try {
     const requestBody: Record<string, unknown> = {
       model: config.model,
-      messages: [
-        {
-          role: "system",
-          content: "你是一名耐心、准确的 AI Agent 学习助手。请使用简洁的中文回答。",
-        },
-        { role: "user", content: question },
-      ],
+      messages: messages.map(({ role, content }) => ({ role, content })),
     };
 
     if (config.temperature !== undefined) {
