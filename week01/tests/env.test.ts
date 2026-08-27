@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { EnvironmentConfigError, loadModelConfig } from "../src/env.js";
+import {
+  EnvironmentConfigError,
+  loadModelConfig,
+  loadServerConfig,
+} from "../src/env.js";
 
 describe("loadModelConfig", () => {
   it("读取并转换合法配置", () => {
@@ -45,5 +49,20 @@ describe("loadModelConfig", () => {
         MODEL_MAX_OUTPUT_TOKENS: "0",
       }),
     ).toThrow(EnvironmentConfigError);
+  });
+});
+
+describe("loadServerConfig", () => {
+  it("默认只监听本机的 3000 端口", () => {
+    expect(loadServerConfig({})).toEqual({
+      host: "127.0.0.1",
+      port: 3000,
+    });
+  });
+
+  it("拒绝不合法端口", () => {
+    expect(() => loadServerConfig({ SERVER_PORT: "70000" })).toThrow(
+      EnvironmentConfigError,
+    );
   });
 });

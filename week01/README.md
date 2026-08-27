@@ -36,6 +36,8 @@ MODEL_MAX_OUTPUT_TOKENS=800
 MODEL_TEMPERATURE=0.2
 CHAT_MAX_TURNS=10
 CHAT_LOG_PATH=logs/chat.jsonl
+SERVER_HOST=127.0.0.1
+SERVER_PORT=3000
 ```
 
 `MODEL_BASE_URL` 应填写 API 的 `/v1` 基础地址，不要包含 `/chat/completions`。`MODEL_MAX_OUTPUT_TOKENS` 会映射为 Chat Completions 的 `max_completion_tokens`，用于限制一次请求最多生成的 token。该限制还包括模型生成的不可见推理或格式 token，因此实际可见回答通常少于配置值。部分模型不支持 `temperature`；遇到参数不支持错误时，可以将 `MODEL_TEMPERATURE` 留空。
@@ -55,6 +57,45 @@ pnpm start
 ```bash
 pnpm dev
 ```
+
+## 最小 HTTP API
+
+启动本地服务：
+
+```bash
+pnpm server
+```
+
+健康检查：
+
+```bash
+curl http://127.0.0.1:3000/health
+```
+
+调用聊天路由：
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"question":"什么是 AI Agent？"}'
+```
+
+请求链路如下：
+
+```text
+浏览器（不可信） ── question ──> 自己的 Node.js 服务 ── API Key + messages ──> 模型服务
+浏览器          <─ answer/usage ─ Node.js 服务       <─ 模型响应 ──────────── 模型服务
+```
+
+这个边界意味着：
+
+- 浏览器只提交 `question`，不能提交 API Key 或覆盖服务端的 system 消息；
+- `.env` 只由 Node.js 进程读取，API 响应不会返回密钥；
+- 服务默认只监听 `127.0.0.1`，且没有开放跨域响应头；
+- 请求体限制为 16 KiB，问题限制为 1 到 2000 字符；
+- 上游模型的具体错误只写到服务端终端，浏览器只收到通用错误。
+
+这里的 HTTP 路由有意使用普通 JSON 响应；命令行程序仍使用 SSE 流式输出。准备接入前端时，可以先让前端和 API 同源运行。若要公开部署，还必须增加身份认证、限流、来源控制与安全日志，不能直接暴露这个学习版服务。
 
 ## 聊天命令
 
@@ -109,13 +150,16 @@ pnpm build
 src/
 ├── chat.ts    # 消息类型、会话状态和命令解析
 ├── env.ts     # 环境变量读取与校验
+├── http.ts    # 最小 HTTP 路由、输入限制与安全响应
 ├── index.ts   # 多轮聊天循环与结果展示
 ├── logger.ts  # JSON Lines 日志追加
 ├── model.ts   # 普通请求、流式请求与模型响应解析
+├── server.ts  # HTTP 服务启动入口
 └── sse.ts     # SSE 网络分片解析
 tests/
 ├── chat.test.ts
 ├── env.test.ts
+├── http.test.ts
 ├── logger.test.ts
 ├── model.test.ts
 └── sse.test.ts

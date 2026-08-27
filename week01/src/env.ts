@@ -14,6 +14,11 @@ const modelConfigSchema = z.object({
   CHAT_LOG_PATH: z.string().trim().min(1).default("logs/chat.jsonl"),
 });
 
+const serverConfigSchema = z.object({
+  SERVER_HOST: z.string().trim().min(1).default("127.0.0.1"),
+  SERVER_PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+});
+
 export interface ModelConfig {
   apiKey: string;
   baseUrl: string;
@@ -23,6 +28,11 @@ export interface ModelConfig {
   temperature: number | undefined;
   maxHistoryTurns: number;
   logPath: string;
+}
+
+export interface ServerConfig {
+  host: string;
+  port: number;
 }
 
 export class EnvironmentConfigError extends Error {
@@ -51,5 +61,24 @@ export function loadModelConfig(
     temperature: result.data.MODEL_TEMPERATURE,
     maxHistoryTurns: result.data.CHAT_MAX_TURNS,
     logPath: result.data.CHAT_LOG_PATH,
+  };
+}
+
+export function loadServerConfig(
+  environment: NodeJS.ProcessEnv = process.env,
+): ServerConfig {
+  const result = serverConfigSchema.safeParse(environment);
+
+  if (!result.success) {
+    const details = result.error.issues
+      .map((issue) => `${issue.path.join(".") || "环境变量"}：${issue.message}`)
+      .join("；");
+
+    throw new EnvironmentConfigError(`HTTP 服务配置错误：${details}`);
+  }
+
+  return {
+    host: result.data.SERVER_HOST,
+    port: result.data.SERVER_PORT,
   };
 }
