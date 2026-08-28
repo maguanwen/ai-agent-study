@@ -1,6 +1,11 @@
 {
   "name": "ai-agent-study",
   "version": "1.0.0",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": ">=11 <12"
+  },
   "description": "",
   "main": "index.js",
   "scripts": {
