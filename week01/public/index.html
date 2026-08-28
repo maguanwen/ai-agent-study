@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Week 01 单轮模型 HTTP API 可视化测试页面" />
+    <title>模型 API 边界实验室</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">WEEK 01 · HTTP API LAB</p>
+          <h1>模型 API 边界实验室</h1>
+          <p class="intro">浏览器只发送问题，Node.js 服务负责保管密钥、构造消息并调用模型。</p>
+        </div>
+        <div class="status" aria-label="服务状态">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">正在检查服务</span>
+        </div>
+      </header>
+
+      <section class="boundary" aria-label="请求链路">
+        <div class="boundary-node">
+          <strong>浏览器</strong>
+          <span>仅持有 question</span>
+        </div>
+        <span class="arrow" aria-hidden="true">→</span>
+        <div class="boundary-node trusted">
+          <strong>Node.js API</strong>
+          <span>读取 .env + system</span>
+        </div>
+        <span class="arrow" aria-hidden="true">→</span>
+        <div class="boundary-node">
+          <strong>模型服务</strong>
+          <span>生成单次回答</span>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <section class="panel composer">
+          <div class="panel-heading">
+            <div>
+              <p class="step">01 · REQUEST</p>
+              <h2>发送一个问题</h2>
+            </div>
+            <span class="method">POST /api/chat</span>
+          </div>
+
+          <form id="chat-form">
+            <label for="question">question</label>
+            <textarea
+              id="question"
+              name="question"
+              rows="8"
+              maxlength="2000"
+              placeholder="例如：请用前端开发者容易理解的方式解释 AI Agent。"
+              required
+            ></textarea>
+            <div class="field-meta">
+              <span>请求不会携带历史问答</span>
+              <span><output id="character-count">0</output>/2000</span>
+            </div>
+
+            <div class="examples" aria-label="示例问题">
+              <button type="button" class="chip" data-question="什么是 AI Agent？">AI Agent</button>
+              <button type="button" class="chip" data-question="请解释 Node.js 中 Buffer 和 JSON 的关系。">Buffer 与 JSON</button>
+              <button type="button" class="chip" data-question="浏览器为什么不能保存模型 API Key？">安全边界</button>
+            </div>
+
+            <button class="submit" id="submit-button" type="submit">
+              <span id="submit-label">发送测试请求</span>
+              <span class="spinner" id="spinner" hidden aria-hidden="true"></span>
+            </button>
+          </form>
+        </section>
+
+        <section class="panel response-panel" aria-live="polite" aria-busy="false" id="response-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="step">02 · RESPONSE</p>
+              <h2>观察响应</h2>
+            </div>
+            <span class="response-state" id="response-state">等待请求</span>
+          </div>
+
+          <div class="empty-state" id="empty-state">
+            <div class="empty-icon">{ }</div>
+            <p>提交问题后，这里会显示服务端返回的回答和 token 用量。</p>
+          </div>
+
+          <div id="result" hidden>
+            <div class="question-preview">
+              <span>本次问题</span>
+              <p id="sent-question"></p>
+            </div>
+            <div class="answer">
+              <span>模型回答</span>
+              <p id="answer-text"></p>
+            </div>
+            <dl class="metrics">
+              <div><dt>模型</dt><dd id="model-name">—</dd></div>
+              <div><dt>输入 token</dt><dd id="input-tokens">—</dd></div>
+              <div><dt>输出 token</dt><dd id="output-tokens">—</dd></div>
+              <div><dt>总 token</dt><dd id="total-tokens">—</dd></div>
+              <div><dt>浏览器耗时</dt><dd id="duration">—</dd></div>
+            </dl>
+          </div>
+
+          <div class="error-box" id="error-box" hidden>
+            <strong>请求失败</strong>
+            <p id="error-message"></p>
+          </div>
+        </section>
+      </div>
+
+      <footer>
+        页面仅保留当前测试结果，不会把界面内容作为对话历史发送给模型。
+      </footer>
+    </main>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

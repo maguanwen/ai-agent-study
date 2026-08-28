@@ -39,6 +39,30 @@ async function startServer(modelCaller?: Parameters<typeof createHttpApp>[0]["mo
 }
 
 describe("HTTP API", () => {
+  it("提供同源的浏览器测试页面和静态资源", async () => {
+    const baseUrl = await startServer();
+    const [pageResponse, scriptResponse, styleResponse] = await Promise.all([
+      fetch(`${baseUrl}/`),
+      fetch(`${baseUrl}/app.js`),
+      fetch(`${baseUrl}/styles.css`),
+    ]);
+    const page = await pageResponse.text();
+    const script = await scriptResponse.text();
+
+    expect(pageResponse.status).toBe(200);
+    expect(pageResponse.headers.get("content-type")).toContain("text/html");
+    expect(pageResponse.headers.get("content-security-policy")).toContain(
+      "default-src 'self'",
+    );
+    expect(page).toContain("模型 API 边界实验室");
+    expect(scriptResponse.headers.get("content-type")).toContain(
+      "text/javascript",
+    );
+    expect(script).toContain('fetch("/api/chat"');
+    expect(styleResponse.headers.get("content-type")).toContain("text/css");
+    expect(page + script).not.toContain(modelConfig.apiKey);
+  });
+
   it("提供健康检查", async () => {
     const baseUrl = await startServer();
     const response = await fetch(`${baseUrl}/health`);

@@ -1,4 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -20,6 +22,7 @@ type ModelCaller = (
 export interface HttpAppOptions {
   modelConfig: ModelConfig;
   modelCaller?: ModelCaller;
+  publicDirectory?: string;
 }
 
 class HttpError extends Error {
@@ -42,6 +45,39 @@ function sendJson(
     "X-Content-Type-Options": "nosniff",
   });
   response.end(JSON.stringify(body));
+}
+
+const staticFiles = new Map([
+  ["/", { fileName: "index.html", contentType: "text/html; charset=utf-8" }],
+  ["/app.js", { fileName: "app.js", contentType: "text/javascript; charset=utf-8" }],
+  ["/styles.css", { fileName: "styles.css", contentType: "text/css; charset=utf-8" }],
+]);
+
+async function sendStaticFile(
+  response: ServerResponse,
+  publicDirectory: string,
+  pathname: string,
+): Promise<boolean> {
+  const staticFile = staticFiles.get(pathname);
+  if (!staticFile) {
+    return false;
+  }
+
+  try {
+    const contents = await readFile(resolve(publicDirectory, staticFile.fileName));
+    response.writeHead(200, {
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "Content-Type": staticFile.contentType,
+      "X-Content-Type-Options": "nosniff",
+    });
+    response.end(contents);
+  } catch (error: unknown) {
+    console.error(`[static] 无法读取 ${staticFile.fileName}`, error);
+    sendJson(response, 500, { error: "页面资源读取失败" });
+  }
+
+  return true;
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -73,9 +109,17 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 
 export function createHttpApp(options: HttpAppOptions) {
   const modelCaller = options.modelCaller ?? callModel;
+  const publicDirectory = options.publicDirectory ?? resolve(process.cwd(), "public");
 
   return createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://localhost");
+
+    if (
+      request.method === "GET" &&
+      await sendStaticFile(response, publicDirectory, url.pathname)
+    ) {
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/health") {
       sendJson(response, 200, { status: "ok" });
