@@ -7,12 +7,25 @@ import { z } from "zod";
 
 import { AnalysisOutputError, analyzeArticle } from "./analyzer.js";
 import { loadModelConfig } from "./env.js";
+import {
+  DEFAULT_PROMPT_VERSION,
+  isPromptVersion,
+  PROMPT_VERSIONS,
+} from "./prompts.js";
 
 async function main(): Promise<void> {
   const inputPath = resolve(process.argv[2] ?? "fixtures/sample-article.txt");
+  const versionArgument = process.argv[3] ?? DEFAULT_PROMPT_VERSION;
+  if (!isPromptVersion(versionArgument)) {
+    throw new Error(
+      `未知提示词版本：${versionArgument}。可用版本：${PROMPT_VERSIONS.join(", ")}`,
+    );
+  }
   const article = await readFile(inputPath, "utf8");
   const startedAt = performance.now();
-  const result = await analyzeArticle(article, loadModelConfig());
+  const result = await analyzeArticle(article, loadModelConfig(), {
+    promptVersion: versionArgument,
+  });
   const elapsedMs = performance.now() - startedAt;
 
   console.log(JSON.stringify(result.analysis, null, 2));

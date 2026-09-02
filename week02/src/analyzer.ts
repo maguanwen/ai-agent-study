@@ -7,7 +7,11 @@ import {
   type ModelTextResult,
   type TokenUsage,
 } from "./model.js";
-import { buildAnalysisMessages, PROMPT_VERSION } from "./prompts.js";
+import {
+  buildAnalysisMessages,
+  DEFAULT_PROMPT_VERSION,
+  type PromptVersion,
+} from "./prompts.js";
 import {
   articleAnalysisSchema,
   articleInputSchema,
@@ -17,17 +21,27 @@ import {
 export interface AnalysisResult {
   analysis: ArticleAnalysis;
   model: string;
-  promptVersion: typeof PROMPT_VERSION;
+  promptVersion: PromptVersion;
   usage: TokenUsage | undefined;
 }
 
-type ModelCaller = (
+export type ModelCaller = (
   messages: readonly ModelMessage[],
   config: ModelConfig,
 ) => Promise<ModelTextResult>;
 
+export type AnalysisOutputErrorKind = "invalid-json" | "schema-mismatch";
+
 export class AnalysisOutputError extends Error {
   override readonly name = "AnalysisOutputError";
+
+  constructor(
+    readonly kind: AnalysisOutputErrorKind,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
 }
 
 export function parseArticleAnalysis(text: string): ArticleAnalysis {
@@ -35,15 +49,19 @@ export function parseArticleAnalysis(text: string): ArticleAnalysis {
   try {
     data = JSON.parse(text);
   } catch (error: unknown) {
-    throw new AnalysisOutputError("模型输出不是合法 JSON", { cause: error });
+    throw new AnalysisOutputError("invalid-json", "模型输出不是合法 JSON", {
+      cause: error,
+    });
   }
 
   const result = articleAnalysisSchema.safeParse(data);
   if (!result.success) {
     const details = z.prettifyError(result.error);
-    throw new AnalysisOutputError(`模型输出不符合文章分析 Schema：\n${details}`, {
-      cause: result.error,
-    });
+    throw new AnalysisOutputError(
+      "schema-mismatch",
+      `模型输出不符合文章分析 Schema：\n${details}`,
+      { cause: result.error },
+    );
   }
 
   return result.data;
@@ -52,18 +70,23 @@ export function parseArticleAnalysis(text: string): ArticleAnalysis {
 export async function analyzeArticle(
   article: string,
   config: ModelConfig,
-  modelCaller: ModelCaller = callModel,
+  options: {
+    promptVersion?: PromptVersion;
+    modelCaller?: ModelCaller;
+  } = {},
 ): Promise<AnalysisResult> {
   const validArticle = articleInputSchema.parse(article);
+  const promptVersion = options.promptVersion ?? DEFAULT_PROMPT_VERSION;
+  const modelCaller = options.modelCaller ?? callModel;
   const modelResult = await modelCaller(
-    buildAnalysisMessages(validArticle),
+    buildAnalysisMessages(validArticle, promptVersion),
     config,
   );
 
   return {
     analysis: parseArticleAnalysis(modelResult.text),
     model: modelResult.model,
-    promptVersion: PROMPT_VERSION,
+    promptVersion,
     usage: modelResult.usage,
   };
 }

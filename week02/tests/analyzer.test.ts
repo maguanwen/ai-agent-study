@@ -34,7 +34,7 @@ describe("parseArticleAnalysis", () => {
 
   it("区分非法 JSON 与 Schema 错误", () => {
     expect(() => parseArticleAnalysis("不是 JSON")).toThrow(
-      new AnalysisOutputError("模型输出不是合法 JSON"),
+      new AnalysisOutputError("invalid-json", "模型输出不是合法 JSON"),
     );
     expect(() => parseArticleAnalysis('{"summary":"只有摘要"}')).toThrow(
       /不符合文章分析 Schema/,
@@ -50,7 +50,7 @@ describe("analyzeArticle", () => {
       usage: { inputTokens: 30, outputTokens: 15, totalTokens: 45 },
     });
 
-    const result = await analyzeArticle(article, config, modelCaller);
+    const result = await analyzeArticle(article, config, { modelCaller });
 
     expect(modelCaller).toHaveBeenCalledOnce();
     const messages = modelCaller.mock.calls[0]?.[0];
@@ -68,5 +68,21 @@ describe("analyzeArticle", () => {
       promptVersion: "v1-zero-shot",
       usage: { inputTokens: 30, outputTokens: 15, totalTokens: 45 },
     });
+  });
+
+  it("允许选择 few-shot 提示词版本", async () => {
+    const modelCaller = vi.fn().mockResolvedValue({
+      text: '{"summary":"测试摘要","keyPoints":["要点一"],"keywords":["测试"]}',
+      model: "test-model",
+      usage: undefined,
+    });
+
+    const result = await analyzeArticle(article, config, {
+      promptVersion: "v2-few-shot",
+      modelCaller,
+    });
+
+    expect(result.promptVersion).toBe("v2-few-shot");
+    expect(modelCaller.mock.calls[0]?.[0]).toHaveLength(4);
   });
 });
