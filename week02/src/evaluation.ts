@@ -9,7 +9,12 @@ import type {
   EvaluationCase,
   EvaluationCategory,
 } from "./evaluation-cases.js";
-import type { TokenUsage } from "./model.js";
+import {
+  ModelApiError,
+  sleep,
+  type Sleep,
+  type TokenUsage,
+} from "./model.js";
 import type { PromptVersion } from "./prompts.js";
 
 export interface EvaluationMetrics {
@@ -27,12 +32,15 @@ export interface EvaluationCaseResult {
   title: string;
   category: EvaluationCategory;
   promptVersion: PromptVersion;
+  requestSucceeded: boolean;
   success: boolean;
+  attempts: number;
   elapsedMs: number;
   metrics: EvaluationMetrics;
   analysis: ArticleAnalysis | undefined;
   model: string | undefined;
   usage: TokenUsage | undefined;
+  errorKind: EvaluationErrorKind | undefined;
   error: string | undefined;
   manualReview: {
     score: 0 | 1 | 2 | 3 | null;
@@ -40,9 +48,23 @@ export interface EvaluationCaseResult {
   };
 }
 
+export type EvaluationErrorKind =
+  | "rate-limit"
+  | "http-error"
+  | "timeout"
+  | "network-error"
+  | "invalid-response"
+  | "invalid-json"
+  | "schema-mismatch"
+  | "unknown";
+
 export interface EvaluationSummary {
   promptVersion: PromptVersion;
   totalCases: number;
+  requestSucceededCases: number;
+  requestSuccessRate: number;
+  requestFailureCases: number;
+  rateLimitFailureCases: number;
   successfulCases: number;
   jsonParseRate: number;
   schemaPassRate: number;
@@ -64,6 +86,11 @@ export interface EvaluationReport {
   generatedAt: string;
   model: string;
   evaluations: PromptEvaluation[];
+}
+
+export interface EvaluationRunOptions {
+  requestIntervalMs?: number;
+  sleep?: Sleep;
 }
 
 function includesText(haystack: string, needle: string): boolean {
@@ -122,6 +149,16 @@ function failedMetrics(error: unknown): EvaluationMetrics {
   };
 }
 
+export function classifyEvaluationError(error: unknown): EvaluationErrorKind {
+  if (error instanceof AnalysisOutputError) {
+    return error.kind;
+  }
+  if (error instanceof ModelApiError) {
+    return error.kind;
+  }
+  return "unknown";
+}
+
 export async function evaluateCase(
   testCase: EvaluationCase,
   promptVersion: PromptVersion,
@@ -146,30 +183,38 @@ export async function evaluateCase(
       title: testCase.title,
       category: testCase.category,
       promptVersion,
+      requestSucceeded: true,
       success:
         metrics.schemaSuccess &&
         constraintsValid &&
         !metrics.forbiddenTextFound,
+      attempts: result.attempts,
       elapsedMs: performance.now() - startedAt,
       metrics,
       analysis: result.analysis,
       model: result.model,
       usage: result.usage,
+      errorKind: undefined,
       error: undefined,
       manualReview: { score: null, notes: "" },
     };
   } catch (error: unknown) {
+    const errorKind = classifyEvaluationError(error);
+    const requestSucceeded = !(error instanceof ModelApiError);
     return {
       caseId: testCase.id,
       title: testCase.title,
       category: testCase.category,
       promptVersion,
+      requestSucceeded,
       success: false,
+      attempts: error instanceof ModelApiError ? error.attempts : 1,
       elapsedMs: performance.now() - startedAt,
       metrics: failedMetrics(error),
       analysis: undefined,
       model: undefined,
       usage: undefined,
+      errorKind,
       error: error instanceof Error ? error.message : String(error),
       manualReview: { score: null, notes: "" },
     };
@@ -202,29 +247,44 @@ export function summarizeEvaluation(
   promptVersion: PromptVersion,
   results: readonly EvaluationCaseResult[],
 ): EvaluationSummary {
+  const requestSucceededResults = results.filter(
+    (result) => result.requestSucceeded,
+  );
   const constraintPassCount = results.filter(
     (result) =>
       result.metrics.summaryLengthValid &&
       result.metrics.keyPointCountValid &&
       result.metrics.keywordCountValid,
   ).length;
-  const adversarialResults = results.filter(
+  const adversarialResults = requestSucceededResults.filter(
     (result) => result.category === "adversarial",
   );
 
   return {
     promptVersion,
     totalCases: results.length,
+    requestSucceededCases: requestSucceededResults.length,
+    requestSuccessRate: rate(requestSucceededResults.length, results.length),
+    requestFailureCases: results.length - requestSucceededResults.length,
+    rateLimitFailureCases: results.filter(
+      (result) => result.errorKind === "rate-limit",
+    ).length,
     successfulCases: results.filter((result) => result.success).length,
     jsonParseRate: rate(
-      results.filter((result) => result.metrics.jsonParseSuccess).length,
-      results.length,
+      requestSucceededResults.filter(
+        (result) => result.metrics.jsonParseSuccess,
+      ).length,
+      requestSucceededResults.length,
     ),
     schemaPassRate: rate(
-      results.filter((result) => result.metrics.schemaSuccess).length,
-      results.length,
+      requestSucceededResults.filter((result) => result.metrics.schemaSuccess)
+        .length,
+      requestSucceededResults.length,
     ),
-    constraintPassRate: rate(constraintPassCount, results.length),
+    constraintPassRate: rate(
+      constraintPassCount,
+      requestSucceededResults.length,
+    ),
     adversarialPassRate: rate(
       adversarialResults.filter(
         (result) => result.success && !result.metrics.forbiddenTextFound,
@@ -232,9 +292,13 @@ export function summarizeEvaluation(
       adversarialResults.length,
     ),
     averageRequiredTermCoverage: average(
-      results.map((result) => result.metrics.requiredTermCoverage),
+      requestSucceededResults.map(
+        (result) => result.metrics.requiredTermCoverage,
+      ),
     ),
-    averageElapsedMs: average(results.map((result) => result.elapsedMs)),
+    averageElapsedMs: average(
+      requestSucceededResults.map((result) => result.elapsedMs),
+    ),
     totalInputTokens: sumUsage(results, "inputTokens"),
     totalOutputTokens: sumUsage(results, "outputTokens"),
     totalTokens: sumUsage(results, "totalTokens"),
@@ -247,10 +311,12 @@ export async function evaluatePromptVersion(
   config: ModelConfig,
   modelCaller: ModelCaller,
   onCaseCompleted?: (result: EvaluationCaseResult) => void,
+  beforeCase?: () => Promise<void>,
 ): Promise<PromptEvaluation> {
   const results: EvaluationCaseResult[] = [];
 
   for (const testCase of testCases) {
+    await beforeCase?.();
     const result = await evaluateCase(
       testCase,
       promptVersion,
@@ -273,8 +339,22 @@ export async function runEvaluationSuite(
   config: ModelConfig,
   modelCaller: ModelCaller,
   onCaseCompleted?: (result: EvaluationCaseResult) => void,
+  options: EvaluationRunOptions = {},
 ): Promise<EvaluationReport> {
   const evaluations: PromptEvaluation[] = [];
+  const requestIntervalMs = options.requestIntervalMs ?? 0;
+  const sleepImplementation = options.sleep ?? sleep;
+  let isFirstCase = true;
+
+  const waitBeforeCase = async (): Promise<void> => {
+    if (isFirstCase) {
+      isFirstCase = false;
+      return;
+    }
+    if (requestIntervalMs > 0) {
+      await sleepImplementation(requestIntervalMs);
+    }
+  };
 
   for (const promptVersion of promptVersions) {
     evaluations.push(
@@ -284,6 +364,7 @@ export async function runEvaluationSuite(
         config,
         modelCaller,
         onCaseCompleted,
+        waitBeforeCase,
       ),
     );
   }

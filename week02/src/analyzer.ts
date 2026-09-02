@@ -3,8 +3,7 @@ import { z } from "zod";
 import type { ModelConfig } from "./env.js";
 import {
   callModel,
-  type ModelMessage,
-  type ModelTextResult,
+  type ModelCaller,
   type TokenUsage,
 } from "./model.js";
 import {
@@ -23,12 +22,10 @@ export interface AnalysisResult {
   model: string;
   promptVersion: PromptVersion;
   usage: TokenUsage | undefined;
+  attempts: number;
 }
 
-export type ModelCaller = (
-  messages: readonly ModelMessage[],
-  config: ModelConfig,
-) => Promise<ModelTextResult>;
+export type { ModelCaller } from "./model.js";
 
 export type AnalysisOutputErrorKind = "invalid-json" | "schema-mismatch";
 
@@ -88,5 +85,6 @@ export async function analyzeArticle(
     model: modelResult.model,
     promptVersion,
     usage: modelResult.usage,
+    attempts: modelResult.attempts ?? 1,
   };
 }

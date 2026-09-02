@@ -13,6 +13,10 @@ describe("renderMarkdownReport", () => {
           summary: {
             promptVersion: "v1-zero-shot",
             totalCases: 1,
+            requestSucceededCases: 1,
+            requestSuccessRate: 1,
+            requestFailureCases: 0,
+            rateLimitFailureCases: 0,
             successfulCases: 1,
             jsonParseRate: 1,
             schemaPassRate: 1,
@@ -33,6 +37,8 @@ describe("renderMarkdownReport", () => {
 
     expect(markdown).toContain("Week 02 提示词评测报告");
     expect(markdown).toContain("v1-zero-shot | 1/1");
+    expect(markdown).toContain("请求成功率");
+    expect(markdown).toContain("错误分类");
     expect(markdown).toContain("人工复核");
   });
 });

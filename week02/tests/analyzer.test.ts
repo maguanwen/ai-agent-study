@@ -67,6 +67,7 @@ describe("analyzeArticle", () => {
       model: "test-model",
       promptVersion: "v1-zero-shot",
       usage: { inputTokens: 30, outputTokens: 15, totalTokens: 45 },
+      attempts: 1,
     });
   });
 
