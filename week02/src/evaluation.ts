@@ -2,6 +2,7 @@ import type { ArticleAnalysis } from "./schema.js";
 import type { ModelConfig } from "./env.js";
 import {
   AnalysisOutputError,
+  AnalysisRequestError,
   analyzeArticle,
   type ModelCaller,
 } from "./analyzer.js";
@@ -35,6 +36,8 @@ export interface EvaluationCaseResult {
   requestSucceeded: boolean;
   success: boolean;
   attempts: number;
+  repairAttempts: number;
+  rateLimitCooldowns: number;
   elapsedMs: number;
   metrics: EvaluationMetrics;
   analysis: ArticleAnalysis | undefined;
@@ -50,6 +53,7 @@ export interface EvaluationCaseResult {
 
 export type EvaluationErrorKind =
   | "rate-limit"
+  | "quota-exhausted"
   | "http-error"
   | "timeout"
   | "network-error"
@@ -65,6 +69,10 @@ export interface EvaluationSummary {
   requestSuccessRate: number;
   requestFailureCases: number;
   rateLimitFailureCases: number;
+  rateLimitCooldownCases: number;
+  rateLimitRecoveredCases: number;
+  repairTriggeredCases: number;
+  repairSuccessfulCases: number;
   successfulCases: number;
   jsonParseRate: number;
   schemaPassRate: number;
@@ -89,8 +97,16 @@ export interface EvaluationReport {
 }
 
 export interface EvaluationRunOptions {
-  requestIntervalMs?: number;
+  rateLimitCooldownMs?: number;
+  maxRateLimitCooldowns?: number;
   sleep?: Sleep;
+  onRateLimitCooldown?: (event: {
+    testCase: EvaluationCase;
+    promptVersion: PromptVersion;
+    cooldown: number;
+    maxCooldowns: number;
+    delayMs: number;
+  }) => void;
 }
 
 function includesText(haystack: string, needle: string): boolean {
@@ -156,7 +172,47 @@ export function classifyEvaluationError(error: unknown): EvaluationErrorKind {
   if (error instanceof ModelApiError) {
     return error.kind;
   }
+  if (error instanceof AnalysisRequestError) {
+    return error.apiError.kind;
+  }
   return "unknown";
+}
+
+function requestSucceeded(error: unknown): boolean {
+  return !(
+    error instanceof ModelApiError || error instanceof AnalysisRequestError
+  );
+}
+
+function attemptsFromError(error: unknown): number {
+  if (
+    error instanceof ModelApiError ||
+    error instanceof AnalysisOutputError ||
+    error instanceof AnalysisRequestError
+  ) {
+    return error.attempts;
+  }
+  return 1;
+}
+
+function repairAttemptsFromError(error: unknown): number {
+  if (
+    error instanceof AnalysisOutputError ||
+    error instanceof AnalysisRequestError
+  ) {
+    return error.repairAttempts;
+  }
+  return 0;
+}
+
+function usageFromError(error: unknown): TokenUsage | undefined {
+  if (
+    error instanceof AnalysisOutputError ||
+    error instanceof AnalysisRequestError
+  ) {
+    return error.usage;
+  }
+  return undefined;
 }
 
 export async function evaluateCase(
@@ -189,6 +245,8 @@ export async function evaluateCase(
         constraintsValid &&
         !metrics.forbiddenTextFound,
       attempts: result.attempts,
+      repairAttempts: result.repairAttempts,
+      rateLimitCooldowns: 0,
       elapsedMs: performance.now() - startedAt,
       metrics,
       analysis: result.analysis,
@@ -200,20 +258,21 @@ export async function evaluateCase(
     };
   } catch (error: unknown) {
     const errorKind = classifyEvaluationError(error);
-    const requestSucceeded = !(error instanceof ModelApiError);
     return {
       caseId: testCase.id,
       title: testCase.title,
       category: testCase.category,
       promptVersion,
-      requestSucceeded,
+      requestSucceeded: requestSucceeded(error),
       success: false,
-      attempts: error instanceof ModelApiError ? error.attempts : 1,
+      attempts: attemptsFromError(error),
+      repairAttempts: repairAttemptsFromError(error),
+      rateLimitCooldowns: 0,
       elapsedMs: performance.now() - startedAt,
       metrics: failedMetrics(error),
       analysis: undefined,
       model: undefined,
-      usage: undefined,
+      usage: usageFromError(error),
       errorKind,
       error: error instanceof Error ? error.message : String(error),
       manualReview: { score: null, notes: "" },
@@ -243,6 +302,21 @@ function sumUsage(
     : values.reduce((sum, value) => sum + value, 0);
 }
 
+function addTokenUsage(
+  current: TokenUsage | undefined,
+  next: TokenUsage | undefined,
+): TokenUsage | undefined {
+  if (!current && !next) {
+    return undefined;
+  }
+
+  return {
+    inputTokens: (current?.inputTokens ?? 0) + (next?.inputTokens ?? 0),
+    outputTokens: (current?.outputTokens ?? 0) + (next?.outputTokens ?? 0),
+    totalTokens: (current?.totalTokens ?? 0) + (next?.totalTokens ?? 0),
+  };
+}
+
 export function summarizeEvaluation(
   promptVersion: PromptVersion,
   results: readonly EvaluationCaseResult[],
@@ -268,6 +342,18 @@ export function summarizeEvaluation(
     requestFailureCases: results.length - requestSucceededResults.length,
     rateLimitFailureCases: results.filter(
       (result) => result.errorKind === "rate-limit",
+    ).length,
+    rateLimitCooldownCases: results.filter(
+      (result) => result.rateLimitCooldowns > 0,
+    ).length,
+    rateLimitRecoveredCases: results.filter(
+      (result) => result.rateLimitCooldowns > 0 && result.requestSucceeded,
+    ).length,
+    repairTriggeredCases: results.filter(
+      (result) => result.repairAttempts > 0,
+    ).length,
+    repairSuccessfulCases: results.filter(
+      (result) => result.repairAttempts > 0 && result.success,
     ).length,
     successfulCases: results.filter((result) => result.success).length,
     jsonParseRate: rate(
@@ -311,20 +397,61 @@ export async function evaluatePromptVersion(
   config: ModelConfig,
   modelCaller: ModelCaller,
   onCaseCompleted?: (result: EvaluationCaseResult) => void,
-  beforeCase?: () => Promise<void>,
+  options: EvaluationRunOptions = {},
 ): Promise<PromptEvaluation> {
   const results: EvaluationCaseResult[] = [];
+  const cooldownMs = options.rateLimitCooldownMs ?? 0;
+  const maxCooldowns = options.maxRateLimitCooldowns ?? 0;
+  const sleepImplementation = options.sleep ?? sleep;
 
   for (const testCase of testCases) {
-    await beforeCase?.();
-    const result = await evaluateCase(
-      testCase,
-      promptVersion,
-      config,
-      modelCaller,
-    );
-    results.push(result);
-    onCaseCompleted?.(result);
+    let cooldowns = 0;
+    let attempts = 0;
+    let repairAttempts = 0;
+    let elapsedMs = 0;
+    let usage: TokenUsage | undefined;
+    let finalResult: EvaluationCaseResult;
+
+    while (true) {
+      const result = await evaluateCase(
+        testCase,
+        promptVersion,
+        config,
+        modelCaller,
+      );
+      attempts += result.attempts;
+      repairAttempts += result.repairAttempts;
+      elapsedMs += result.elapsedMs;
+      usage = addTokenUsage(usage, result.usage);
+
+      if (result.errorKind !== "rate-limit" || cooldowns >= maxCooldowns) {
+        finalResult = {
+          ...result,
+          attempts,
+          repairAttempts,
+          rateLimitCooldowns: cooldowns,
+          elapsedMs,
+          usage,
+        };
+        break;
+      }
+
+      cooldowns += 1;
+      options.onRateLimitCooldown?.({
+        testCase,
+        promptVersion,
+        cooldown: cooldowns,
+        maxCooldowns,
+        delayMs: cooldownMs,
+      });
+      if (cooldownMs > 0) {
+        await sleepImplementation(cooldownMs);
+        elapsedMs += cooldownMs;
+      }
+    }
+
+    results.push(finalResult);
+    onCaseCompleted?.(finalResult);
   }
 
   return {
@@ -342,19 +469,6 @@ export async function runEvaluationSuite(
   options: EvaluationRunOptions = {},
 ): Promise<EvaluationReport> {
   const evaluations: PromptEvaluation[] = [];
-  const requestIntervalMs = options.requestIntervalMs ?? 0;
-  const sleepImplementation = options.sleep ?? sleep;
-  let isFirstCase = true;
-
-  const waitBeforeCase = async (): Promise<void> => {
-    if (isFirstCase) {
-      isFirstCase = false;
-      return;
-    }
-    if (requestIntervalMs > 0) {
-      await sleepImplementation(requestIntervalMs);
-    }
-  };
 
   for (const promptVersion of promptVersions) {
     evaluations.push(
@@ -364,7 +478,7 @@ export async function runEvaluationSuite(
         config,
         modelCaller,
         onCaseCompleted,
-        waitBeforeCase,
+        options,
       ),
     );
   }

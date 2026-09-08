@@ -17,18 +17,30 @@ const evaluationConfigSchema = z.object({
     .number()
     .int()
     .nonnegative()
-    .default(6500),
+    .default(7000),
+  EVAL_INITIAL_DELAY_MS: z.coerce.number().int().nonnegative().default(7000),
   EVAL_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
   EVAL_RETRY_BASE_DELAY_MS: z.coerce
     .number()
     .int()
     .positive()
-    .default(1000),
+    .default(7000),
   EVAL_RETRY_MAX_DELAY_MS: z.coerce
     .number()
     .int()
     .positive()
-    .default(10_000),
+    .default(30_000),
+  EVAL_RATE_LIMIT_COOLDOWN_MS: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(60_000),
+  EVAL_MAX_RATE_LIMIT_COOLDOWNS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .max(3)
+    .default(1),
 });
 
 export interface ModelConfig {
@@ -42,9 +54,12 @@ export interface ModelConfig {
 
 export interface EvaluationConfig {
   requestIntervalMs: number;
+  initialDelayMs: number;
   maxRetries: number;
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
+  rateLimitCooldownMs: number;
+  maxRateLimitCooldowns: number;
 }
 
 export class EnvironmentConfigError extends Error {
@@ -97,8 +112,11 @@ export function loadEvaluationConfig(
 
   return {
     requestIntervalMs: result.data.EVAL_REQUEST_INTERVAL_MS,
+    initialDelayMs: result.data.EVAL_INITIAL_DELAY_MS,
     maxRetries: result.data.EVAL_MAX_RETRIES,
     retryBaseDelayMs: result.data.EVAL_RETRY_BASE_DELAY_MS,
     retryMaxDelayMs: result.data.EVAL_RETRY_MAX_DELAY_MS,
+    rateLimitCooldownMs: result.data.EVAL_RATE_LIMIT_COOLDOWN_MS,
+    maxRateLimitCooldowns: result.data.EVAL_MAX_RATE_LIMIT_COOLDOWNS,
   };
 }

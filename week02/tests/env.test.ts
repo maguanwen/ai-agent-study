@@ -41,16 +41,22 @@ describe("loadEvaluationConfig", () => {
   it("读取节流和重试配置", () => {
     expect(
       loadEvaluationConfig({
-        EVAL_REQUEST_INTERVAL_MS: "6500",
+        EVAL_REQUEST_INTERVAL_MS: "7000",
+        EVAL_INITIAL_DELAY_MS: "7000",
         EVAL_MAX_RETRIES: "2",
-        EVAL_RETRY_BASE_DELAY_MS: "1000",
-        EVAL_RETRY_MAX_DELAY_MS: "10000",
+        EVAL_RETRY_BASE_DELAY_MS: "7000",
+        EVAL_RETRY_MAX_DELAY_MS: "30000",
+        EVAL_RATE_LIMIT_COOLDOWN_MS: "60000",
+        EVAL_MAX_RATE_LIMIT_COOLDOWNS: "1",
       }),
     ).toEqual({
-      requestIntervalMs: 6500,
+      requestIntervalMs: 7000,
+      initialDelayMs: 7000,
       maxRetries: 2,
-      retryBaseDelayMs: 1000,
-      retryMaxDelayMs: 10000,
+      retryBaseDelayMs: 7000,
+      retryMaxDelayMs: 30000,
+      rateLimitCooldownMs: 60000,
+      maxRateLimitCooldowns: 1,
     });
   });
 

@@ -43,6 +43,7 @@ export interface ModelTextResult {
 
 export type ModelApiErrorKind =
   | "rate-limit"
+  | "quota-exhausted"
   | "http-error"
   | "timeout"
   | "network-error"
@@ -76,6 +77,7 @@ export interface RateLimitRetryOptions {
   maxDelayMs: number;
   sleep?: Sleep;
   random?: () => number;
+  beforeAttempt?: () => Promise<void>;
   onRetry?: (event: {
     attempt: number;
     maxAttempts: number;
@@ -84,8 +86,31 @@ export interface RateLimitRetryOptions {
   }) => void;
 }
 
+export interface RequestSchedulerOptions {
+  intervalMs: number;
+  initialDelayMs?: number;
+  sleep?: Sleep;
+  now?: () => number;
+}
+
 export const sleep: Sleep = (milliseconds) =>
   new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+
+export function createRequestScheduler(
+  options: RequestSchedulerOptions,
+): () => Promise<void> {
+  const sleepImplementation = options.sleep ?? sleep;
+  const now = options.now ?? Date.now;
+  let nextAllowedAt = now() + (options.initialDelayMs ?? 0);
+
+  return async () => {
+    const delayMs = Math.max(0, nextAllowedAt - now());
+    if (delayMs > 0) {
+      await sleepImplementation(delayMs);
+    }
+    nextAllowedAt = Math.max(now(), nextAllowedAt) + options.intervalMs;
+  };
+}
 
 export function parseRetryAfter(
   value: string | null,
@@ -102,6 +127,110 @@ export function parseRetryAfter(
 
   const retryAt = Date.parse(value);
   return Number.isNaN(retryAt) ? undefined : Math.max(0, retryAt - now);
+}
+
+export function parseResetDuration(value: string | null): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const matches = [
+    ...value.trim().matchAll(/(\d+(?:\.\d+)?)\s*(ms|s|m|h)/gi),
+  ];
+  if (matches.length === 0) {
+    return undefined;
+  }
+
+  const unitMilliseconds = { ms: 1, s: 1000, m: 60_000, h: 3_600_000 };
+  return Math.ceil(
+    matches.reduce((total, match) => {
+      const amount = Number(match[1]);
+      const unit = match[2]!.toLowerCase() as keyof typeof unitMilliseconds;
+      return total + amount * unitMilliseconds[unit];
+    }, 0),
+  );
+}
+
+interface ApiErrorDetails {
+  code: string | undefined;
+  type: string | undefined;
+  message: string | undefined;
+}
+
+function parseApiErrorDetails(body: string): ApiErrorDetails {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || !("error" in parsed)) {
+      return { code: undefined, type: undefined, message: undefined };
+    }
+
+    const error = parsed.error;
+    if (!error || typeof error !== "object") {
+      return { code: undefined, type: undefined, message: undefined };
+    }
+
+    return {
+      code:
+        "code" in error && typeof error.code === "string"
+          ? error.code
+          : undefined,
+      type:
+        "type" in error && typeof error.type === "string"
+          ? error.type
+          : undefined,
+      message:
+        "message" in error && typeof error.message === "string"
+          ? error.message
+          : undefined,
+    };
+  } catch {
+    return { code: undefined, type: undefined, message: undefined };
+  }
+}
+
+function retryDelayFromResponse(
+  response: Response,
+  message: string | undefined,
+): number | undefined {
+  const retryAfter = parseRetryAfter(response.headers.get("retry-after"));
+  if (retryAfter !== undefined) {
+    return retryAfter;
+  }
+
+  const retryAfterMillisecondsHeader = response.headers.get("retry-after-ms");
+  const retryAfterMilliseconds = Number(retryAfterMillisecondsHeader);
+  if (
+    retryAfterMillisecondsHeader !== null &&
+    Number.isFinite(retryAfterMilliseconds) &&
+    retryAfterMilliseconds >= 0
+  ) {
+    return Math.ceil(retryAfterMilliseconds);
+  }
+
+  const resetHeader = parseResetDuration(
+    response.headers.get("x-ratelimit-reset-requests"),
+  );
+  if (resetHeader !== undefined) {
+    return resetHeader;
+  }
+
+  const messageDelay = message?.match(
+    /try again in\s+(\d+(?:\.\d+)?\s*(?:ms|s|m|h))/i,
+  )?.[1];
+  return parseResetDuration(messageDelay ?? null);
+}
+
+function isQuotaError(details: ApiErrorDetails): boolean {
+  return [details.code, details.type].some(
+    (value) => value === "insufficient_quota" || value === "quota_exhausted",
+  );
+}
+
+function safeErrorIdentifier(details: ApiErrorDetails): string {
+  const identifier = details.code ?? details.type;
+  return identifier && /^[a-zA-Z0-9_.-]+$/.test(identifier)
+    ? `（${identifier}）`
+    : "";
 }
 
 export function parseChatCompletion(data: unknown): ModelTextResult {
@@ -165,20 +294,28 @@ export async function callModel(
     );
 
     if (!response.ok) {
-      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+      const responseBody = (await response.text()).slice(0, 2000);
+      const errorDetails = parseApiErrorDetails(responseBody);
       if (response.status === 429) {
+        if (isQuotaError(errorDetails)) {
+          throw new ModelApiError(
+            "quota-exhausted",
+            "模型账户额度不足（HTTP 429），等待重试无法恢复",
+            response.status,
+          );
+        }
+
         throw new ModelApiError(
           "rate-limit",
           "模型请求受到限流（HTTP 429）",
           response.status,
-          retryAfterMs,
+          retryDelayFromResponse(response, errorDetails.message),
         );
       }
 
-      const details = (await response.text()).trim().slice(0, 300);
       throw new ModelApiError(
         "http-error",
-        `模型请求失败（HTTP ${response.status}）${details ? `：${details}` : ""}`,
+        `模型请求失败（HTTP ${response.status}）${safeErrorIdentifier(errorDetails)}`,
         response.status,
       );
     }
@@ -238,6 +375,7 @@ export function withRateLimitRetry(
     const maxAttempts = options.maxRetries + 1;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      await options.beforeAttempt?.();
       try {
         const result = await modelCaller(messages, config);
         return { ...result, attempts: attempt };

@@ -55,6 +55,7 @@ describe("evaluateCase", () => {
     expect(result.success).toBe(true);
     expect(result.requestSucceeded).toBe(true);
     expect(result.attempts).toBe(1);
+    expect(result.repairAttempts).toBe(0);
     expect(result.metrics.jsonParseSuccess).toBe(true);
     expect(result.metrics.schemaSuccess).toBe(true);
     expect(result.usage?.totalTokens).toBe(30);
@@ -86,9 +87,35 @@ describe("evaluateCase", () => {
     expect(first.metrics.jsonParseSuccess).toBe(false);
     expect(first.errorKind).toBe("invalid-json");
     expect(first.requestSucceeded).toBe(true);
+    expect(first.repairAttempts).toBe(1);
+    expect(first.attempts).toBe(2);
     expect(second.metrics.jsonParseSuccess).toBe(true);
     expect(second.metrics.schemaSuccess).toBe(false);
     expect(second.errorKind).toBe("schema-mismatch");
+  });
+
+  it("记录修复成功及其额外请求成本", async () => {
+    const modelCaller = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...validModelResult,
+        text: '{"summary":"缺少数组字段"}',
+      })
+      .mockResolvedValueOnce(validModelResult);
+    const result = await evaluateCase(
+      evaluationCases[0]!,
+      "v1-zero-shot",
+      config,
+      modelCaller,
+    );
+
+    expect(result).toMatchObject({
+      requestSucceeded: true,
+      success: true,
+      attempts: 2,
+      repairAttempts: 1,
+      usage: { inputTokens: 40, outputTokens: 20, totalTokens: 60 },
+    });
   });
 
   it("把 429 记录为请求失败而不是 JSON 失败", async () => {
@@ -110,6 +137,7 @@ describe("evaluateCase", () => {
       success: false,
       errorKind: "rate-limit",
       attempts: 3,
+      repairAttempts: 0,
     });
   });
 });
@@ -124,6 +152,8 @@ describe("evaluation summary", () => {
       requestSucceeded: true,
       success: true,
       attempts: 1,
+      repairAttempts: 0,
+      rateLimitCooldowns: 0,
       elapsedMs: 100,
       metrics: {
         jsonParseSuccess: true,
@@ -150,6 +180,7 @@ describe("evaluation summary", () => {
       requestSucceeded: false,
       success: false,
       attempts: 3,
+      repairAttempts: 0,
       metrics: {
         jsonParseSuccess: false,
         schemaSuccess: false,
@@ -173,6 +204,10 @@ describe("evaluation summary", () => {
         requestSuccessRate: 0.5,
         requestFailureCases: 1,
         rateLimitFailureCases: 1,
+        rateLimitCooldownCases: 0,
+        rateLimitRecoveredCases: 0,
+        repairTriggeredCases: 0,
+        repairSuccessfulCases: 0,
         jsonParseRate: 1,
         schemaPassRate: 1,
         averageRequiredTermCoverage: 0.5,
@@ -184,20 +219,86 @@ describe("evaluation summary", () => {
   it("顺序执行两个版本的完整测试集", async () => {
     const modelCaller = vi.fn().mockResolvedValue(validModelResult);
     const onCaseCompleted = vi.fn();
-    const sleep = vi.fn().mockResolvedValue(undefined);
     const report = await runEvaluationSuite(
       evaluationCases,
       ["v1-zero-shot", "v2-few-shot"],
       config,
       modelCaller,
       onCaseCompleted,
-      { requestIntervalMs: 6500, sleep },
     );
 
     expect(report.evaluations).toHaveLength(2);
     expect(modelCaller).toHaveBeenCalledTimes(20);
     expect(onCaseCompleted).toHaveBeenCalledTimes(20);
-    expect(sleep).toHaveBeenCalledTimes(19);
-    expect(sleep).toHaveBeenCalledWith(6500);
+  });
+
+  it("临时 429 冷却后重新运行当前案例并累计成本", async () => {
+    const modelCaller = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new ModelApiError("rate-limit", "模型请求受到限流", 429),
+      )
+      .mockResolvedValueOnce(validModelResult);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+    const onRateLimitCooldown = vi.fn();
+
+    const report = await runEvaluationSuite(
+      [evaluationCases[0]!],
+      ["v1-zero-shot"],
+      config,
+      modelCaller,
+      undefined,
+      {
+        rateLimitCooldownMs: 60_000,
+        maxRateLimitCooldowns: 1,
+        sleep,
+        onRateLimitCooldown,
+      },
+    );
+
+    expect(report.evaluations[0]?.cases[0]).toMatchObject({
+      requestSucceeded: true,
+      success: true,
+      attempts: 2,
+      rateLimitCooldowns: 1,
+      elapsedMs: expect.any(Number),
+    });
+    expect(report.evaluations[0]?.summary).toMatchObject({
+      rateLimitFailureCases: 0,
+      rateLimitCooldownCases: 1,
+      rateLimitRecoveredCases: 1,
+    });
+    expect(sleep).toHaveBeenCalledOnce();
+    expect(sleep).toHaveBeenCalledWith(60_000);
+    expect(onRateLimitCooldown).toHaveBeenCalledOnce();
+  });
+
+  it("配额耗尽不会进入限流冷却循环", async () => {
+    const modelCaller = vi
+      .fn()
+      .mockRejectedValue(
+        new ModelApiError("quota-exhausted", "模型配额已耗尽", 429),
+      );
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const report = await runEvaluationSuite(
+      [evaluationCases[0]!],
+      ["v1-zero-shot"],
+      config,
+      modelCaller,
+      undefined,
+      {
+        rateLimitCooldownMs: 60_000,
+        maxRateLimitCooldowns: 1,
+        sleep,
+      },
+    );
+
+    expect(report.evaluations[0]?.cases[0]).toMatchObject({
+      errorKind: "quota-exhausted",
+      attempts: 1,
+      rateLimitCooldowns: 0,
+    });
+    expect(sleep).not.toHaveBeenCalled();
   });
 });

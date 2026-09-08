@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildAnalysisMessages,
+  buildAnalysisRepairMessages,
   isPromptVersion,
   PROMPT_VERSIONS,
 } from "../src/prompts.js";
@@ -32,6 +33,25 @@ describe("buildAnalysisMessages", () => {
     ]);
     expect(() => JSON.parse(messages[2]!.content)).not.toThrow();
     expect(messages[3]?.content).toContain(article);
+  });
+});
+
+describe("buildAnalysisRepairMessages", () => {
+  it("保留原任务并追加错误输出和校验信息", () => {
+    const original = buildAnalysisMessages(article, "v1-zero-shot");
+    const messages = buildAnalysisRepairMessages(
+      original,
+      '{"summary":"缺少字段"}',
+      "keyPoints: expected array",
+    );
+
+    expect(messages).toHaveLength(original.length + 2);
+    expect(messages.at(-2)).toEqual({
+      role: "assistant",
+      content: '{"summary":"缺少字段"}',
+    });
+    expect(messages.at(-1)?.content).toContain("keyPoints: expected array");
+    expect(messages.at(-1)?.content).toContain("不要添加文章中不存在的事实");
   });
 });
 

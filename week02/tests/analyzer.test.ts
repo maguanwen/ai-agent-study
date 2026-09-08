@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   AnalysisOutputError,
+  AnalysisRequestError,
   analyzeArticle,
   parseArticleAnalysis,
 } from "../src/analyzer.js";
 import type { ModelConfig } from "../src/env.js";
+import { ModelApiError } from "../src/model.js";
 
 const config: ModelConfig = {
   apiKey: "secret",
@@ -68,6 +70,7 @@ describe("analyzeArticle", () => {
       promptVersion: "v1-zero-shot",
       usage: { inputTokens: 30, outputTokens: 15, totalTokens: 45 },
       attempts: 1,
+      repairAttempts: 0,
     });
   });
 
@@ -85,5 +88,84 @@ describe("analyzeArticle", () => {
 
     expect(result.promptVersion).toBe("v2-few-shot");
     expect(modelCaller.mock.calls[0]?.[0]).toHaveLength(4);
+  });
+
+  it("Schema 失败后修复一次并累计 HTTP 尝试与 token", async () => {
+    const modelCaller = vi
+      .fn()
+      .mockResolvedValueOnce({
+        text: '{"summary":"缺少数组字段"}',
+        model: "test-model",
+        usage: { inputTokens: 20, outputTokens: 5, totalTokens: 25 },
+        attempts: 1,
+      })
+      .mockResolvedValueOnce({
+        text: '{"summary":"修复摘要","keyPoints":["要点"],"keywords":["测试"]}',
+        model: "test-model",
+        usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+        attempts: 2,
+      });
+    const result = await analyzeArticle(article, config, {
+      modelCaller,
+    });
+
+    expect(modelCaller).toHaveBeenCalledTimes(2);
+    expect(modelCaller.mock.calls[1]?.[0].at(-1)?.content).toContain(
+      "模型输出不符合文章分析 Schema",
+    );
+    expect(result).toMatchObject({
+      attempts: 3,
+      repairAttempts: 1,
+      usage: { inputTokens: 50, outputTokens: 15, totalTokens: 65 },
+      analysis: { summary: "修复摘要" },
+    });
+  });
+
+  it("修复达到上限后明确失败", async () => {
+    const modelCaller = vi.fn().mockResolvedValue({
+      text: '{"summary":"始终缺少数组字段"}',
+      model: "test-model",
+      usage: { inputTokens: 20, outputTokens: 5, totalTokens: 25 },
+    });
+
+    const promise = analyzeArticle(article, config, { modelCaller });
+
+    await expect(promise).rejects.toMatchObject({
+      name: "AnalysisOutputError",
+      kind: "schema-mismatch",
+      attempts: 2,
+      repairAttempts: 1,
+      usage: { inputTokens: 40, outputTokens: 10, totalTokens: 50 },
+    });
+    expect(modelCaller).toHaveBeenCalledTimes(2);
+  });
+
+  it("API 请求错误不会触发输出修复", async () => {
+    const modelCaller = vi
+      .fn()
+      .mockRejectedValue(new ModelApiError("rate-limit", "限流", 429));
+
+    const promise = analyzeArticle(article, config, { modelCaller });
+
+    await expect(promise).rejects.toBeInstanceOf(AnalysisRequestError);
+    await expect(promise).rejects.toMatchObject({
+      attempts: 1,
+      repairAttempts: 0,
+      apiError: { kind: "rate-limit" },
+    });
+    expect(modelCaller).toHaveBeenCalledOnce();
+  });
+
+  it("允许关闭输出修复", async () => {
+    const modelCaller = vi.fn().mockResolvedValue({
+      text: "不是 JSON",
+      model: "test-model",
+      usage: undefined,
+    });
+
+    await expect(
+      analyzeArticle(article, config, { modelCaller, maxRepairAttempts: 0 }),
+    ).rejects.toMatchObject({ repairAttempts: 0, attempts: 1 });
+    expect(modelCaller).toHaveBeenCalledOnce();
   });
 });

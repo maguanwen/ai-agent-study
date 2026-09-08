@@ -17,6 +17,10 @@ describe("renderMarkdownReport", () => {
             requestSuccessRate: 1,
             requestFailureCases: 0,
             rateLimitFailureCases: 0,
+            rateLimitCooldownCases: 0,
+            rateLimitRecoveredCases: 0,
+            repairTriggeredCases: 0,
+            repairSuccessfulCases: 0,
             successfulCases: 1,
             jsonParseRate: 1,
             schemaPassRate: 1,
@@ -39,6 +43,9 @@ describe("renderMarkdownReport", () => {
     expect(markdown).toContain("v1-zero-shot | 1/1");
     expect(markdown).toContain("请求成功率");
     expect(markdown).toContain("错误分类");
+    expect(markdown).toContain("修复成功/触发");
+    expect(markdown).toContain("限流恢复/冷却");
+    expect(markdown).toContain("输出修复");
     expect(markdown).toContain("人工复核");
   });
 });
