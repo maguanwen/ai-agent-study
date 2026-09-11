@@ -1,0 +1,82 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
+      "cwd": "${workspaceFolder}/week03",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
+      "windows": {
+        "runtimeExecutable": "${env:APPDATA}/nvm/v24.19.0/node.exe"
+      },
+      "name": "Week03：Agent 演示（无需 Key）",
+      "program": "${workspaceFolder}/week03/src/run-agent.ts",
+      "args": [
+        "--demo"
+      ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
+      "cwd": "${workspaceFolder}/week03",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
+      "windows": {
+        "runtimeExecutable": "${env:APPDATA}/nvm/v24.19.0/node.exe"
+      },
+      "name": "Week03：Agent 真实模型（消耗 API 额度）",
+      "program": "${workspaceFolder}/week03/src/run-agent.ts",
+      "args": [
+        "${input:agentQuestion}"
+      ]
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx"
+      ],
+      "cwd": "${workspaceFolder}/week03",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**"
+      ],
+      "windows": {
+        "runtimeExecutable": "${env:APPDATA}/nvm/v24.19.0/node.exe"
+      },
+      "name": "Week03：本地知识服务",
+      "program": "${workspaceFolder}/week03/src/serve.ts"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "agentQuestion",
+      "type": "promptString",
+      "description": "输入交给 Agent 的问题",
+      "default": "请使用计算器计算 6 乘 7"
+    }
+  ]
+}

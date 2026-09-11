@@ -1,5 +1,20 @@
 # Week 03：工具调用与 Agent 循环
 
+## VS Code 断点调试
+
+在 VS Code 中打开整个 ai-agent-study 根目录（不是只打开 week03），根目录 .vscode/launch.json 已提供三个调试入口。
+
+1. 打开 src/agent.ts，在 modelCaller 调用行左侧点击添加红色断点。
+2. 按 Ctrl+Shift+D，选择“Week03：Agent 演示（无需 Key）”，按 F5。
+3. 暂停后查看左侧变量中的 messages、step；F10 单步跳过，F11 进入函数，Shift+F11 跳出函数，F5 继续，Shift+F5 停止。
+4. 在 executeTool 调用行和 messages.push 的 tool 消息位置增加断点，观察第一次模型请求、工具执行和第二次模型请求的区别。断点应放在可执行语句上，interface/type 声明不会执行。
+
+演示模式不会进入 createModelCaller 的 fetch 分支。要调试真实 HTTP 请求，先配置 week03/.env，再选择“Week03：Agent 真实模型（消耗 API 额度）”，输入问题启动；查询知识时先启动“Week03：本地知识服务”配置或另开终端执行 pnpm serve。
+
+配置通过 node --import tsx 直接调试 TypeScript，无需先 build。Windows 配置使用本机已有的 ${env:APPDATA}/nvm/v24.19.0/node.exe，避免系统默认旧版 Node 影响运行。换电脑或 Node 版本后需调整 launch.json 中的 windows.runtimeExecutable；其他系统使用 PATH 中的 node（要求 24.x）。
+
+如果断点呈灰色，先确认使用 F5 启动了对应配置、打开的是根目录、week03 已安装依赖，且断点位于当前运行分支。不要用“运行代码 / Code Runner”代替调试入口。
+
 本周目标是让模型在代码规定的边界内选择工具，由 TypeScript 程序校验参数并执行工具，最后把工具结果交还给模型生成回答。
 
 ## 第一阶段：确定性工具层
@@ -96,4 +111,41 @@ pnpm start -- search_knowledge '{"query":"不存在的内容"}'
 
 错误分为参数校验错误，以及知识请求的 timeout、network、http、invalid-response。执行器把知识请求错误包装成 ToolExecutionError，并在 cause 中保留分类；CLI 会显示分类及简要说明。未启动服务时会提示运行 pnpm serve。
 
-本阶段无需 API Key 或复制 .env。验证使用 pnpm typecheck、pnpm test、pnpm build；HTTP 联调测试自动启动随机端口并关闭服务。真实模型选择工具与 Agent 循环是下一阶段。
+本阶段的手动工具命令无需 API Key。验证使用 pnpm typecheck、pnpm test、pnpm build；HTTP 联调测试自动启动随机端口并关闭服务。
+
+## 第三阶段：模型选择工具与 Agent 循环
+
+先运行无需 Key 的演示，观察模拟模型请求工具、本地真实执行、观察结果返回给模拟模型的过程：
+
+```bash
+pnpm agent:demo
+```
+
+真实模型模式在 week03 目录准备 .env（已有文件时请直接编辑，避免覆盖）：
+
+```bash
+cp .env.example .env
+```
+
+填写 MODEL_API_KEY、MODEL_BASE_URL、MODEL_NAME。使用 Node.js 24 的 loadEnvFile 读取配置，无需 dotenv。沿用你已验证的服务商和支持 Chat Completions function calling 的模型；不同服务商并不保证完全兼容。MODEL_TOKEN_PARAMETER 默认 max_completion_tokens，服务商要求旧参数时改为 max_tokens。
+
+```bash
+pnpm agent -- "请使用计算器计算 6 乘 7"
+pnpm agent -- "查询上海现在的时间"
+pnpm agent -- "在本地知识中查找 Zod 的用途，并注明来源"
+```
+
+最后一条需要另一个终端先运行 pnpm serve。真实模型命令会消耗 API 额度。
+
+数据流：用户问题 → 携带 tools 请求模型 → assistant.tool_calls → JSON.parse 参数 → 白名单与 Zod 校验 → 执行工具 → role=tool 消息 → 再次请求模型 → 最终文字或继续调用。
+
+- model.ts：将 Zod Schema 转成模型可读的 JSON Schema，通过 fetch 调用 /chat/completions。strict=false 保留可选参数；refine 中的时区、除零规则仍在本地执行。此处不再强制文章分析的 JSON mode。
+- agent.ts：每次运行持有独立 messages，保留 assistant 工具请求；每个 tool 结果携带对应的 tool_call_id。同一步多个工具按顺序执行。
+- 工具失败返回 ok=false 和错误分类，模型可以修正参数再调用；模型/API 失败直接停止并保留已有工具轨迹。本阶段没有移植 Week 02 的 HTTP 自动重试。
+- AGENT_MAX_STEPS 默认 6，表示包括最终回答在内的模型请求上限；最后一步仍要求工具时停止，不再执行工具。AGENT_MAX_TOOL_CALLS 默认 8，包含失败的工具调用尝试，超出预算的一批不会执行。
+- 输出 stopReason、steps、trace、usage 和 missingUsageSteps。completed 表示得到最终文本，并不保证所有工具都成功或答案语义正确；达到上限时 answer=null，不伪造结果。缺少 usage 的步骤不按真实零消费解读，累计 token 只代表已报告用量。
+- 模型单次请求默认 30 秒超时；知识 HTTP 工具默认 3 秒超时。这不是整个任务的统一截止时间。重复请求目前由总步数和工具次数限制，后续再学习专门的重复调用检测与幂等。
+
+读取代码建议：run-agent.ts → model.ts 的消息类型和 buildTools → agent.ts 的循环 → 测试。
+
+协议参考：[OpenAI Function calling](https://developers.openai.com/api/docs/guides/function-calling)。本项目本阶段使用 Chat Completions 的工具消息形式；不支持仅提供 Responses 工具调用的模型。
