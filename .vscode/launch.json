@@ -4,6 +4,22 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "Week03：错误恢复演示（无需 Key）",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/week03/src/run-agent.ts",
+      "args": ["--demo-recovery"],
+      "cwd": "${workspaceFolder}/week03",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "windows": {
+        "runtimeExecutable": "${env:APPDATA}/nvm/v24.19.0/node.exe"
+      }
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "runtimeExecutable": "node",
       "runtimeArgs": [
         "--import",

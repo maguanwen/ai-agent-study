@@ -6,16 +6,22 @@ import { ToolRegistry } from "./tool-registry.js";
 import { calculatorTool } from "./tools/calculator.js";
 import { createTimeTool } from "./tools/time.js";
 import { createKnowledgeTool } from "./tools/knowledge-search.js";
+import { recoveryDemoCaller, recoveryDemoQuestion } from "./recovery-demo.js";
 
 async function main() {
   const demo = process.argv[2] === "--demo";
-  const question = demo ? "请使用计算器计算 6 乘 7。" : process.argv.slice(2).join(" ");
+  const recoveryDemo = process.argv[2] === "--demo-recovery";
+  const question = recoveryDemo ? recoveryDemoQuestion
+    : demo ? "请使用计算器计算 6 乘 7。" : process.argv.slice(2).join(" ");
   if (!question.trim()) throw new Error('用法：pnpm agent -- "请使用计算器计算 6 乘 7"');
   const registry = new ToolRegistry([calculatorTool, createTimeTool(), createKnowledgeTool()]);
   let caller: ModelCaller;
   let maxSteps = 6;
   let maxToolCalls = 8;
-  if (demo) {
+  if (recoveryDemo) {
+    console.log("错误恢复演示：模拟模型先传错参数，再读取错误并修正；不调用真实 API。");
+    caller = recoveryDemoCaller;
+  } else if (demo) {
     console.log("演示模式：模拟模型选择工具，真实执行本地计算器。");
     caller = async (messages) => {
       const observation = messages.find((message) => message.role === "tool");

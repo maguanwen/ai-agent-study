@@ -2,7 +2,7 @@
 
 ## VS Code 断点调试
 
-在 VS Code 中打开整个 ai-agent-study 根目录（不是只打开 week03），根目录 .vscode/launch.json 已提供三个调试入口。
+在 VS Code 中打开整个 ai-agent-study 根目录（不是只打开 week03），根目录 .vscode/launch.json 已提供普通演示、错误恢复演示、真实模型和本地知识服务四个调试入口。
 
 1. 打开 src/agent.ts，在 modelCaller 调用行左侧点击添加红色断点。
 2. 按 Ctrl+Shift+D，选择“Week03：Agent 演示（无需 Key）”，按 F5。
@@ -149,3 +149,33 @@ pnpm agent -- "在本地知识中查找 Zod 的用途，并注明来源"
 读取代码建议：run-agent.ts → model.ts 的消息类型和 buildTools → agent.ts 的循环 → 测试。
 
 协议参考：[OpenAI Function calling](https://developers.openai.com/api/docs/guides/function-calling)。本项目本阶段使用 Chat Completions 的工具消息形式；不支持仅提供 Responses 工具调用的模型。
+
+## 第四阶段：错误恢复演示（无需 Key）
+
+在 week03 目录运行：
+
+```bash
+pnpm agent:demo:recovery
+```
+
+题目固定为“12 除以 3”。复用已有 runAgent，不请求模型 API、不读取 .env、不需要知识服务。
+
+1. 第一轮模拟模型故意返回除数 0；本地 Zod 拒绝参数，生成 invalid-arguments 错误。此时没有真正执行除法。
+2. runAgent 将失败作为 role=tool 消息加入历史，而不是立刻结束任务。
+3. 第二轮模拟模型读取最近的错误消息，返回新调用，除数改为题目要求的 3；计算器得到 4。
+4. 第三轮模拟模型读取最近的成功结果，返回最终文字。
+
+预期：stopReason=completed、steps=3、trace 有两条记录（一次失败、一次成功），answer 包含结果 4。这里的三轮都是模拟调用，未产生 API 费用；missingUsageSteps=3 表示模拟返回未提供 usage。
+
+修复决策在 src/recovery-demo.ts 中明确写死，仅用来演示反馈路径，不是通用自动修复算法。真实模式由真实模型决定是否修正或如实说明失败。这里没有新增 HTTP 重试、重复调用检测或幂等机制，也不是自动重发相同参数。
+
+### 断点阅读顺序
+
+选择 VS Code 的“Week03：错误恢复演示（无需 Key）”，按 F5：
+
+1. 在 agent.ts 的 modelCaller 调用行查看 messages 和 step。
+2. 在 recovery-demo.ts 的 observation 赋值处观察最近一条工具消息：无结果 → 失败 → 成功。使用 findLast 而不是 find，避免一直读到最早的失败结果。
+3. 在 agent.ts 的 catch 中查看参数校验异常如何变成 ToolOutcome，再查看 role=tool 消息如何加入历史。
+4. 在 recovery-demo.ts 的 right = 3 处观察修正后的参数；第三轮查看 result.output.result。
+
+tests/recovery-demo.test.ts 验证错误反馈、参数修正、消息顺序，以及恢复过程仍受最大步数和工具调用预算约束。失败调用也占用工具预算；预算不足时不会保证修复完成。

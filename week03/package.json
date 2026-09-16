@@ -12,6 +12,7 @@
     "start": "tsx src/index.ts",
     "agent": "tsx src/run-agent.ts",
     "agent:demo": "tsx src/run-agent.ts --demo",
+    "agent:demo:recovery": "tsx src/run-agent.ts --demo-recovery",
     "serve": "tsx src/serve.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit",
