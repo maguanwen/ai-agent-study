@@ -2,7 +2,7 @@
 
 ## VS Code 断点调试
 
-在 VS Code 中打开整个 ai-agent-study 根目录（不是只打开 week03），根目录 .vscode/launch.json 已提供普通演示、错误恢复演示、真实模型和本地知识服务四个调试入口。
+在 VS Code 中打开整个 ai-agent-study 根目录（不是只打开 week03），根目录 .vscode/launch.json 已提供普通演示、错误恢复演示、重复调用演示、真实模型和本地知识服务五个调试入口。
 
 1. 打开 src/agent.ts，在 modelCaller 调用行左侧点击添加红色断点。
 2. 按 Ctrl+Shift+D，选择“Week03：Agent 演示（无需 Key）”，按 F5。
@@ -144,7 +144,7 @@ pnpm agent -- "在本地知识中查找 Zod 的用途，并注明来源"
 - 工具失败返回 ok=false 和错误分类，模型可以修正参数再调用；模型/API 失败直接停止并保留已有工具轨迹。本阶段没有移植 Week 02 的 HTTP 自动重试。
 - AGENT_MAX_STEPS 默认 6，表示包括最终回答在内的模型请求上限；最后一步仍要求工具时停止，不再执行工具。AGENT_MAX_TOOL_CALLS 默认 8，包含失败的工具调用尝试，超出预算的一批不会执行。
 - 输出 stopReason、steps、trace、usage 和 missingUsageSteps。completed 表示得到最终文本，并不保证所有工具都成功或答案语义正确；达到上限时 answer=null，不伪造结果。缺少 usage 的步骤不按真实零消费解读，累计 token 只代表已报告用量。
-- 模型单次请求默认 30 秒超时；知识 HTTP 工具默认 3 秒超时。这不是整个任务的统一截止时间。重复请求目前由总步数和工具次数限制，后续再学习专门的重复调用检测与幂等。
+- 模型单次请求默认 30 秒超时；知识 HTTP 工具默认 3 秒超时。这不是整个任务的统一截止时间。除总步数和工具次数限制外，第五阶段新增同一任务内的重复调用检测；未实现业务幂等。
 
 读取代码建议：run-agent.ts → model.ts 的消息类型和 buildTools → agent.ts 的循环 → 测试。
 
@@ -179,3 +179,30 @@ pnpm agent:demo:recovery
 4. 在 recovery-demo.ts 的 right = 3 处观察修正后的参数；第三轮查看 result.output.result。
 
 tests/recovery-demo.test.ts 验证错误反馈、参数修正、消息顺序，以及恢复过程仍受最大步数和工具调用预算约束。失败调用也占用工具预算；预算不足时不会保证修复完成。
+
+## 第五阶段：重复调用检测（无需 Key）
+
+```bash
+pnpm agent:demo:repeated
+```
+
+在 week03 目录运行。模拟模型不断请求计算 12 + 8，每次使用新的调用 ID，并交替调整 JSON 空格与键顺序。前两次真实执行计算器，第三次被程序拦截，不请求真实模型、不读取 .env。
+
+预期输出：stopReason=repeated-tool-call、steps=3、trace 长度为 2、answer=null。blockedCall 记录触发拦截的调用和限制。该命令会以退出码 1 结束，pnpm 可能提示 ELIFECYCLE；这是本演示预期的保护性停止，不表示代码崩溃。被拦截调用不计入执行轨迹，所在轮的模型调用仍计入 steps 和已报告的 usage。
+
+### 检测规则
+
+- runAgent 的 maxIdenticalToolCalls 默认 2，含首次尝试，即第三次相同请求被拦截。可通过 runAgent 的 options 调整，范围 1～30；本阶段没有新增环境变量。
+- 规则同样应用于真实模式。计数仅在一次 runAgent 内保存，非连续重复也累计；成功和失败尝试都计数。
+- 指纹由工具名和解析后的 JSON 内容组成，与 tool_call_id 无关。对象键递归排序，数组顺序和参数类型保留；非法 JSON 按原文识别。
+- 检测发生在 Zod 工具参数校验之前，不合并默认参数、省略参数等业务上等价的输入，不判断计算式是否数学等价。
+- 先检查整批调用；只要本批有一项重复超限，整批不执行。maxSteps、maxToolCalls 的检查优先于重复检测。
+- 这是可配置的教学防循环策略，不证明模型一定陷入死循环。时间查询等工具可能合理地重复调用，实际项目应按工具和任务设计策略。总调用预算仍负责限制不断改变参数的循环。
+
+### 调试顺序与幂等边界
+
+选择“Week03：重复调用演示（无需 Key）”，在 repeated-demo.ts 的 attempt、repeated-call.ts 的 toolCallFingerprint，以及 agent.ts 的 count > maxIdenticalToolCalls 处打断点，观察 ID 变化但指纹一致，以及第三轮如何在执行工具前结束。
+
+重复检测不是幂等：它不缓存执行结果，也不跨任务、跨进程持久化，更不能保证订单或消息只创建一次。对有副作用的业务操作，还需要独立的业务幂等键及服务端原子去重机制；不能仅靠参数相同判断是不是同一个业务操作。本阶段未增加订单、数据库或真实写入工具。
+
+tests/repeated-call.test.ts 覆盖指纹规范化、不同 ID、同批重复、非法参数与非法 JSON、参数变化、跨任务隔离、穿插重复及阈值校验。原有错误恢复测试继续验证修正参数后可以成功完成。

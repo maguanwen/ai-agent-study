@@ -13,6 +13,7 @@
     "agent": "tsx src/run-agent.ts",
     "agent:demo": "tsx src/run-agent.ts --demo",
     "agent:demo:recovery": "tsx src/run-agent.ts --demo-recovery",
+    "agent:demo:repeated": "tsx src/run-agent.ts --demo-repeated",
     "serve": "tsx src/serve.ts",
     "dev": "tsx watch src/index.ts",
     "typecheck": "tsc --project tsconfig.json --noEmit",
