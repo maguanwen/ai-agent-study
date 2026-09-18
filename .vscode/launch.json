@@ -4,6 +4,20 @@
     {
       "type": "node",
       "request": "launch",
+      "name": "Week04：文档加载与切分（无需 Key）",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/week04/src/index.ts",
+      "args": ["${input:week04Docs}", "${input:week04MaxChars}"],
+      "cwd": "${workspaceFolder}/week04",
+      "console": "integratedTerminal",
+      "sourceMaps": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "windows": { "runtimeExecutable": "${env:APPDATA}/nvm/v24.19.0/node.exe" }
+    },
+    {
+      "type": "node",
+      "request": "launch",
       "name": "Week03：重复调用演示（无需 Key）",
       "runtimeExecutable": "node",
       "runtimeArgs": ["--import", "tsx"],
@@ -102,6 +116,18 @@
     }
   ],
   "inputs": [
+    {
+      "id": "week04Docs",
+      "type": "promptString",
+      "description": "资料目录（相对于 week04，例如 docs 或 ../week03）",
+      "default": "docs"
+    },
+    {
+      "id": "week04MaxChars",
+      "type": "promptString",
+      "description": "每块最大字符数（1～10000；50 方便观察长度切分）",
+      "default": "50"
+    },
     {
       "id": "agentQuestion",
       "type": "promptString",
